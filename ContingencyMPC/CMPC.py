@@ -9,7 +9,7 @@ current_file_path = os.path.dirname(os.path.abspath(__file__))
 
 # Parameters:可以测试如下4组参数，分别对应CMPC的2种工况，RMPC的2中工况。
 
-# 1. CMPC - obstacle pops out
+# # 1. CMPC - obstacle pops out
 cmpc = True     # True 使用CMPC; False 使用RMPC.
 obs_pop = True  # True obs跳出; False obs不跳出.
 # Pc = 0.25     # Cost weight for contingency control(也是Contingency planning的概率)
@@ -31,9 +31,9 @@ Pc = 0.7
 # obs_pop = False
 # Pc = 1.0 - 1e-2      
 
-# Define the horizon(这里的N可以理解为t。且横向速度为1个单位，所以N也可以理解为横向位置x。)
+# Define the horizon(这里的N可以理解为t)
 N = 12      # 总共仿真12步
-N_obs = 10  # N for obstacle (obs所处的横向位置在x=10处;同时也是ego在x向到达obs时所需要的时间t)
+N_obs = 10  # N for obstacle 
 N_c = 4     # N for contingency (pops out) obs在N=4时开始跳出
 # N_o = N_obs - N_c   # N for observe (pops out)
 
@@ -51,16 +51,14 @@ x0 = 0
 y0n = 0
 y0c = 0
 
-# Function to perform contingency MPC
-# (输入: 当前时刻t,ego的初始状态(x0, y0n, y0c))
-# (输出: t时刻的最优值(x_opt, yn_opt, yc_opt, un_opt, uc_opt),obs在t时刻的y位置y_obs, 以及N_obs时刻的y位置y_obs_N)
+# Function to perform contingency MPC(输入: 当前时刻t,nominal与contingency的初始状态)
 def solve_Cmpc(x0, y0n, y0c, t):
 
-    # Define the control inputs (定义控制输入符号变量un,uc，长度为N。具体含义可以实测)
+    # Define the control inputs (定义控制输入)
     un = ca.MX.sym('un', N)
     uc = ca.MX.sym('uc', N)
 
-    # Define the states (定义状态矩阵,都是"N+1"的零矩阵，赋初始值。)
+    # Define the states (定义状态)
     x = ca.MX.zeros(N+1)
     yn = ca.MX.zeros(N+1)
     yc = ca.MX.zeros(N+1)
@@ -68,43 +66,41 @@ def solve_Cmpc(x0, y0n, y0c, t):
     yn[0] = y0n
     yc[0] = y0c
 
-    # State update equations (状态转移方程，更新状态)
+    # State update equations (使用状态转移方程，更新状态)
     for k in range(N):
         x[k+1] = x[k] + 1
         yn[k+1] = yn[k] + un[k]
         yc[k+1] = yc[k] + uc[k]
 
-    # Define the cost function (定义成本函数,只考虑控制输入与概率)
+    # Define the cost function (定义成本函数)
     J = 0
     for k in range(N):             
         J += Pn * un[k]**2 + Pc * uc[k]**2
 
-    # Define the constraints (定义约束条件:只对初始状态与ego到达obs的x即之后的y状态约束。y的变化只与输入u有关，因此是u的约束)
-    g = []      # 等式约束 
-    lbg = []    # 不等式约束：下边界
-    ubg = []    # 不等式约束：上边界
+    # Define the constraints (定义约束条件:控制输入约束)
+    g = []
+    lbg = []
+    ubg = []
 
-    # Control constraint(如下初始约束保证了第一个时间步的un[0]与uc[0]值相等，也是初始y状态相同)
+    # Control constraint
     g.append(un[0] - uc[0])
     lbg.append(0)
     ubg.append(0)
     
-    # Obstacle avoidance constraint (障碍物避障约束:ego到达obs的x即之后的y状态约束)
-    # y_obs 是当前t时刻obs的y位置
+    # Obstacle avoidance constraint (障碍物避障约束)
     if t <= N_c or not obs_pop:
         y_obs = y_obs_0
     else:        
         y_obs = obs_speed * (t - N_c) + y_obs_0  
     # y_obs_N = min(y_obs_max, obs_speed * (N_obs - t) + y_obs)
-    y_obs_N = obs_speed * (N_obs - t) + y_obs #计算当自车到达obs所在的x位置时，obs的y向位置y_obs_N
+    y_obs_N = obs_speed * (N_obs - t) + y_obs
         
     for k in range(N+1):
-        # 该if条件说明：对ego到达obs的x即之后的y状态进行约束
         if k + t >= N_obs:
+
             # if contingency occur
             if t > N_c and obs_pop:
-                # both see the obstacle(如果应急情况真实发生:contingency与nominal都要约束)
-                # 应满足:yc[k] - y_obs_N > 0 且 yn[k] - y_obs_N > 0。即满足 yc[k] > y_obs_N 与 yn[k] > y_obs_N
+                # both see the obstacle
                 g.append(yc[k] - y_obs_N)
                 lbg.append(0)
                 ubg.append(ca.inf)
@@ -113,8 +109,7 @@ def solve_Cmpc(x0, y0n, y0c, t):
                 ubg.append(ca.inf)
             
             else:
-                # only yc see the obstacle(如果应急情况没有真实发生:只需对contingency约束)
-                # 应满足：yc[k] - y_obs_N - obs_width > 0。即满足 yc[k] > y_obs_N + obs_width
+                # only yc see the obstacle
                 g.append(yc[k] - y_obs_N - obs_width)
                 lbg.append(0)
                 ubg.append(ca.inf)
@@ -123,18 +118,18 @@ def solve_Cmpc(x0, y0n, y0c, t):
                 # ubg.append(ca.inf)
                 
 
-    # Convert the problem to a QP(ca.vertcat 将多个变量垂直拼接成一个向量; 初始化了QP问题的状态变量x，目标函数J，等式约束g。)
+    # Convert the problem to a QP
     qp = {'x': ca.vertcat(un, uc), 'f': J, 'g': ca.vertcat(*g)}
-    S = ca.qpsol('S', 'osqp', qp)   # ca.qpsol 是CasADi库中用于求解二次规划问题的函数,'osqp' 是指定的求解器
+    S = ca.qpsol('S', 'osqp', qp)
 
-    # Solve the problem 调用求解器 S，并传入约束的下界 lbg 和上界 ubg，从而求解优化问题并返回解 sol
+    # Solve the problem
     sol = S(lbg=lbg, ubg=ubg)
-    u_opt = sol['x']    # 对应该QP问题的'x'变量是 ca.vertcat(un, uc) 即求出了 un 和 uc
+    u_opt = sol['x']
 
     # Extract the optimal control inputs and states
-    un_opt = u_opt[:N].full().flatten()     # u_opt中的 [0, N) 为 un_opt,[N, 2*N) 为 uc_opt
+    un_opt = u_opt[:N].full().flatten()
     uc_opt = u_opt[N:2*N].full().flatten()
-    x_opt = np.zeros(N+1)   # 根据求解器求出的un与uc，利用状态转移方程，求x_opt,yn_opt,yc_opt
+    x_opt = np.zeros(N+1)
     yn_opt = np.zeros(N+1)
     yc_opt = np.zeros(N+1)
     x_opt[0] = x0
@@ -146,7 +141,6 @@ def solve_Cmpc(x0, y0n, y0c, t):
         yn_opt[k+1] = yn_opt[k] + un_opt[k]
         yc_opt[k+1] = yc_opt[k] + uc_opt[k]
 
-    # 返回求出的t时刻的最优(x_opt, yn_opt, yc_opt, un_opt, uc_opt),obs在t时刻的y位置y_obs, 以及N_obs时刻的y位置y_obs_N
     return x_opt, yn_opt, yc_opt, un_opt, uc_opt, y_obs, y_obs_N
 
 # Initialize lists to store the results for animation
@@ -166,9 +160,10 @@ x_curr = x0
 y0n_curr = y0n
 y0c_curr = y0c
 
-# Perform rolling horizon MPC(共迭代N步，每一步都用cmpc求解最优结果)
+# Perform rolling horizon MPC
 for t in range(N):
-    # solve MPC on timestep t(t时刻的最优值(x_opt, yn_opt, yc_opt, un_opt, uc_opt),obs在t时刻的y位置y_obs, 以及N_obs时刻的y位置y_obs_N)
+
+    # solve MPC on timestep t
     x_opt, yn_opt, yc_opt, un_opt, uc_opt, y_obs, y_obs_N = solve_Cmpc(x_curr, y0n_curr, y0c_curr, t)
     # print(f"t = {t}, y_obs = {y_obs}")
     x_hist.append(x_opt)
@@ -188,7 +183,7 @@ for t in range(N):
     y0c_curr = yc_opt[1]
     
 
-# Create the animation(以下为画图并更新图片的代码，不是cmpc算法的重点了。)
+# Create the animation
 fig, ax = plt.subplots(2, 1, figsize=(10, 8))
 
 def update(frame):
