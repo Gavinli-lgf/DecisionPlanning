@@ -7,27 +7,28 @@ from matplotlib.animation import FuncAnimation
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 
 # 参数设置
-T = 10
-tau = 0.5
-N = int(T/tau)
+T = 10          # 总时间10s
+tau = 0.5       # 时间步长0.5s 
+N = int(T/tau)  # 总步数N=20
 # tau = 1
 # N = 5
-Q = np.diag([0.0, 1.0, 2.0, 1.0, 2.0, 4.0])
-R = np.diag([4.0, 4.0])
-xF0 = np.array([2.0, 15.0, 0.0, 5.0, 0.0, 0.0])
-xFref = np.array([0.0, 15.0, 0.0, 5.0, 0.0, 0.0])
+Q = np.diag([0.0, 1.0, 2.0, 1.0, 2.0, 4.0])         # 状态误差权重(分别对一个x,y方向上的6个状态。Q[0][0]为0,说明cost中不关注x的位置)
+R = np.diag([4.0, 4.0])                             # 控制输入权重(分别对应x,y方向上的输入jx,jy)
+xF0 = np.array([2.0, 15.0, 0.0, 5.0, 0.0, 0.0])     # follower初始状态定义(x,vx,ax,y,vy,ay)
+xFref = np.array([0.0, 15.0, 0.0, 5.0, 0.0, 0.0])   # follower目标状态(由Q[0][0]为0可知,不关注x状态,只关注另外5个状态)
 # xL0 = np.array([12.0, 10.0, 0.0, 3.0, 0.0, 0.0])
-xL0 = np.array([32.0, 10.0, 0.0, 3.0, 0.0, 0.0])
-xLref = np.array([0.0, 10.0, 0.0, 5.0, 0.0, 0.0])
+xL0 = np.array([32.0, 10.0, 0.0, 3.0, 0.0, 0.0])    # leader初始状态定义
+xLref = np.array([0.0, 10.0, 0.0, 5.0, 0.0, 0.0])   # leader目标状态(由Q[0][0]为0可知,不关注x状态,只关注另外5个状态)
 addCollisionCons = True
-vxRef = 10
-KF = 0.01
-KL = 1 - KF
+vxRef = 15
+# vxRef = 10
 
+KF = 0.01       # folloer的cost系数(KF与KL和为1)
+KL = 1 - KF     # leader的cost系数
 # distF = 20    # collision ditance (conservative)
-distF = 10    # collision ditance (agressive)
-distL = 15
-Kinfluence = 0
+distF = 10      # collision ditance (agressive)(follower避障约束中要与leader的安全距离)
+distL = 15      # leader避障约束中要与follower的安全距离
+Kinfluence = 0  # leader对周围folloer影响cost的系数
 
 # KF = 0.5
 # KL = 1 - KF
@@ -35,7 +36,7 @@ Kinfluence = 0
 # distL = 20
 # Kinfluence = 1    # enable Jinfluence
 
-# 状态转移矩阵
+# 状态转移矩阵(x,y方向都使用jerk的3阶模型)
 A_np = np.array([[1.0, tau, 0.5*tau**2, 0.0, 0.0, 0.0],
                  [0.0, 1.0, tau, 0.0, 0.0, 0.0],
                  [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
@@ -43,6 +44,7 @@ A_np = np.array([[1.0, tau, 0.5*tau**2, 0.0, 0.0, 0.0],
                  [0.0, 0.0, 0.0, 0.0, 1.0, tau],
                  [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]])
 
+# 控制输入矩阵
 B_np = np.array([[1/6*tau**3, 0.0],
                  [0.5*tau**2, 0.0],
                  [tau, 0.0],
@@ -53,7 +55,7 @@ B_np = np.array([[1/6*tau**3, 0.0],
 A = ca.MX(A_np)
 B = ca.MX(B_np)
 
-# 定义系统动力学
+# 定义系统动力学(状态转移方程)
 def dynamics(x, u):
     return ca.mtimes(A, x) + ca.mtimes(B, u)
 
@@ -69,22 +71,22 @@ def gameLeaderFollower(xL0, xF0):
     # 定义优化问题
     nx = 6  # 状态维度
     nu = 2  # 输入维度
-    XF = ca.MX.sym('XF', nx, N+1)
-    UF = ca.MX.sym('UF', nu, N)
-    XL = ca.MX.sym('XL', nx, N+1)
-    UL = ca.MX.sym('UL', nu, N)
-    lenX = nx * (N+1)
-    lenU = nu * N
+    XF = ca.MX.sym('XF', nx, N+1)   # 6*21
+    UF = ca.MX.sym('UF', nu, N)     # 2*20(follower的2个控制量jerk_f_x, jerk_f_y)
+    XL = ca.MX.sym('XL', nx, N+1)   # 6*21
+    UL = ca.MX.sym('UL', nu, N)     # 2*20(leader的2个控制量jerk_l_x, jerk_l_y)
+    lenX = nx * (N+1)   # 6*21=121
+    lenU = nu * N       # 2*20=40
 
-    JF = 0
-    JL = 0
-    Jinfluence = 0
-    consF = []
-    consL = []
-    collisionConsF = []
-    collisionConsL = []
+    JF = 0          # cost:follower的代价函数
+    JL = 0          # cost:leader的代价函数
+    Jinfluence = 0  # cost:leader对周围follower的影响代价
+    consF = []          # constrain: follower的等式约束
+    consL = []          # constrain: leader的等式约束
+    collisionConsF = [] # constrain: follower的不等式约束
+    collisionConsL = [] # constrain: leader的不等式约束
 
-    # 初始状态
+    # 等式约束1:约束leader,follower的初始状态
     consF.append(XF[:, 0] - xF0)
     consL.append(XL[:, 0] - xL0)
 
@@ -96,12 +98,12 @@ def gameLeaderFollower(xL0, xF0):
         JF += ca.mtimes([(XF[:, k+1] - xFrefCa).T, Q, (XF[:, k+1] - xFrefCa)]) + ca.mtimes([UF[:, k].T, R, UF[:, k]])
         JL += ca.mtimes([(XL[:, k+1] - xLrefCa).T, Q, (XL[:, k+1] - xLrefCa)]) + ca.mtimes([UL[:, k].T, R, UL[:, k]])
         Jinfluence += (XF[1, k+1] - vxRef) ** 2
-        # constrain
+        # constrain(等式约束2:约束leader,follower满足动力学方程)
         xF_next = dynamics(XF[:, k], UF[:, k])
         xL_next = dynamics(XL[:, k], UL[:, k])
         consF.append(XF[:, k+1] - xF_next)
         consL.append(XL[:, k+1] - xL_next)
-        # collision
+        # collision(不等式约束: follower与leader分别的避障约束)
         if addCollisionCons:
             # px_L - px_F > dist  => dist + px_F - px_L < 0
             collisionConsF.append(distF + XF[0, k+1] - XL[0, k+1])
@@ -113,14 +115,14 @@ def gameLeaderFollower(xL0, xF0):
     inequConsL = ca.vertcat(*collisionConsL)
     inequCon = ca.veccat(inequConsF, inequConsL)
 
-    # define Lagrangian multipliers
+    # define Lagrangian multipliers(即拉格朗日乘子lambda/mu的维度,分别等于对应等式/不等式约束的个数)
     lambda_ = ca.MX.sym('lambda', equConF.size1())
     mu = ca.MX.sym('nu', inequConsF.size1())
 
-    # Lagrangian
+    # Lagrangian(构建follower的cost的拉格朗日函数)
     Lagrangian = JF + ca.mtimes([lambda_.T, equConF]) + ca.mtimes([mu.T, inequConsF])
 
-    # KKT condition (equality)
+    # KKT condition (equality)(构建follower的优化的kkt条件)
     grad_L_x = ca.gradient(Lagrangian, ca.vertcat(ca.reshape(XF, -1, 1), ca.reshape(UF, -1, 1)))
     complementary_slackness = ca.diag(mu) @ inequConsF
     equCon = ca.vertcat(equConF, equConL, grad_L_x, complementary_slackness)
