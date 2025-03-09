@@ -59,7 +59,11 @@ B = ca.MX(B_np)
 def dynamics(x, u):
     return ca.mtimes(A, x) + ca.mtimes(B, u)
 
-# Function for Leader Follower Game
+"""
+Function for Leader Follower Game
+输入: leader,follower的初始状态xL0,xF0;
+输出: XF_sol, UF_sol, XL_sol, UL_sol
+"""
 def gameLeaderFollower(xL0, xF0):
 
     # # 创建优化变量
@@ -128,7 +132,9 @@ def gameLeaderFollower(xL0, xF0):
     equCon = ca.vertcat(equConF, equConL, grad_L_x, complementary_slackness)
 
     # construct the optimization problem
+    # bi-level的状态变量包含6部分:XF,UF,XL,UL,lambda,mu
     x = ca.vertcat(ca.reshape(XF, -1, 1), ca.reshape(UF, -1, 1), ca.reshape(XL, -1, 1), ca.reshape(UL, -1, 1), lambda_, mu)
+    # 对"bi-level"的状态变量的约束: 对"XF,UF,XL,UL,lambda"的下边界约束为"-ca.inf"; 对"mu"约束为"0"。
     lbx = ca.vertcat((2 * (lenU + lenX) + lambda_.size1()) * [-ca.inf] + mu.size1() * [0])
     nlp = {'x': x, 'f': KF * JF + KL * JL + Kinfluence * Jinfluence, 'g': ca.vertcat(equCon, inequCon)}
 
@@ -147,7 +153,7 @@ def gameLeaderFollower(xL0, xF0):
     sol = solver(lbg=ca.DM(equCon.size1() * [0] + inequCon.size1() * [-ca.inf]), ubg=ca.DM((equCon.size1() + inequCon.size1()) * [0]), lbx = lbx)
     # sol = solver(lbg = 0, ubg = 0)
 
-    # 提取解
+    # 提取解(根据bi-level的状态变量的构造形式,对优化结果进行提取。)
     sol_x = sol['x'].full().flatten()
     XF_sol = sol_x[:lenX].reshape(N+1, nx).T
     UF_sol = sol_x[lenX:lenX+lenU].reshape(N, nu).T
@@ -237,21 +243,22 @@ plt.tight_layout()
 # Create the animation
 fig, ax = plt.subplots(2, 1, figsize=(10, 8))
 
+# 输入:frame 表示当前需要更新第frame帧的图片(每一帧就是一个时间步长tau)
 def update(frame):
 
     # clear plotting of last timestep
     ax[0].clear()
     ax[1].clear()
     
-    # plot traj
+    # plot traj(在ax[0]上画出follower,leader的位置点(x,y))
     ax[0].plot(XF_sol[0, : frame+1], XF_sol[3, : frame+1], 'bo-', label='Traj_F')
     ax[0].plot(XL_sol[0, : frame+1], XL_sol[3, : frame+1], 'ro-', label='Traj_L')
 
-    # plot collision distance
+    # plot collision distance(在ax[0]上分别用竖线标记出与follower,leader保持安全距离的位置)
     ax[0].axvline(x = XF_sol[0, frame] + distF, color='b', linestyle='--', label='collisionF')
     ax[0].axvline(x = XL_sol[0, frame] - distL, color='r', linestyle='--', label='collisionL')
 
-    # Add labels
+    # Add labels(设置ax[0]的横轴为x,纵轴为y,并在图上方标记每帧的时间点)
     ax[0].set_xlabel('x')
     ax[0].set_ylabel('y')
     # ax[0].legend()
@@ -263,7 +270,7 @@ def update(frame):
     ax[0].set_ylim(0, 10)
     ax[0].grid(True)
 
-    # Plot 
+    # Plot(在ax[1]上画出follower,leader的速度值) 
     time = np.arange(0, frame * tau + tau, tau)
     ax[1].plot(time, XF_sol[1, : frame+1], 'bo-', label='vxF')
     ax[1].plot(time, XL_sol[1, : frame+1], 'ro-', label='vxL')
@@ -274,7 +281,7 @@ def update(frame):
     # # ax[1].legend()
     # # ax[1].set_title('Control Inputs')
 
-    # # Set limit
+    # # Set limit(ax[1]的横轴为时间,纵轴为速度)
     ax[1].set_xlim(0, T+2*tau)
     # ax[1].set_ylim(-0.2, 0.2)
     # ax[1].grid(True)
