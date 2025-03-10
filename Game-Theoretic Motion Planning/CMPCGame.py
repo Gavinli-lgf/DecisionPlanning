@@ -8,8 +8,8 @@ from matplotlib.animation import FuncAnimation
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 
 # scenario
-decel = True        # whether follower will decelarate
-# decel = False
+# decel = True        # whether follower will decelarate
+decel = False
 
 # 参数设置
 T = 10
@@ -17,12 +17,12 @@ tau = 0.5
 N = int(T/tau)  # planning horizon & planning times
 # tau = 1
 # N = 5
-Q = np.diag([0.0, 1.0, 2.0, 1.0, 2.0, 4.0])
-R = np.diag([4.0, 4.0])
+Q = np.diag([0.0, 1.0, 2.0, 1.0, 2.0, 4.0]) # 状态误差权重(分别对一个x,y方向上的6个状态。Q[0][0]为0,说明cost中不关注x的位置)
+R = np.diag([4.0, 4.0])     # 控制输入权重(分别对应x,y方向上的输入jx,jy)
 xF0 = np.array([2.0, 15.0, 0.0, 5.0, 0.0, 0.0])
-xFref = np.array([0.0, 15.0, 0.0, 5.0, 0.0, 0.0])
+xFref = np.array([0.0, 15.0, 0.0, 5.0, 0.0, 0.0])  #不关注x的位置,只关注另外5个状态
 xL0 = np.array([32.0, 5.0, 0.0, 3.0, 0.0, 0.0])
-xLref = np.array([0.0, 5.0, 0.0, 5.0, 0.0, 0.0])
+xLref = np.array([0.0, 5.0, 0.0, 5.0, 0.0, 0.0])   #不关注x的位置,只关注另外5个状态
 addCollisionCons = True
 KF = 0.01
 KL = 1 - KF
@@ -30,7 +30,7 @@ Kinfluence = 0
 tolerance = 5e-2
 accThreshold = 0.4  # Dead zone threshold of accelation for Accel / Dccel prediction
 probUpperBound = 0.95 # maximum probility
-probGrid = 0.1
+probGrid = 0.1  # 当概率需要更新时，每个时间步的概率增量
 
 distL = 15
 # distF = 10
@@ -39,7 +39,7 @@ distDecelF = 20    # dist for follower to decel
 distAccelF = 10
 # probDecel0 = 0.99   # init prob 
 # probDecel0 = 0.01   # init prob 
-probDecel0 = 0.5
+probDecel0 = 0.5            # 加减速的初始概率都为0.5
 probAccel0 = 1 - probDecel0
 
 # KF = 0.5
@@ -52,7 +52,7 @@ probAccel0 = 1 - probDecel0
 lengthCar = 8
 widthCar = 0.4
 
-# 状态转移矩阵
+# 状态转移矩阵(x,y方向都使用jerk的3阶模型)
 A_np = np.array([[1.0, tau, 0.5*tau**2, 0.0, 0.0, 0.0],
                  [0.0, 1.0, tau, 0.0, 0.0, 0.0],
                  [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
@@ -60,6 +60,7 @@ A_np = np.array([[1.0, tau, 0.5*tau**2, 0.0, 0.0, 0.0],
                  [0.0, 0.0, 0.0, 0.0, 1.0, tau],
                  [0.0, 0.0, 0.0, 0.0, 0.0, 1.0]])
 
+# 控制输入矩阵
 B_np = np.array([[1/6*tau**3, 0.0],
                  [0.5*tau**2, 0.0],
                  [tau, 0.0],
@@ -70,21 +71,26 @@ B_np = np.array([[1/6*tau**3, 0.0],
 A = ca.MX(A_np)
 B = ca.MX(B_np)
 
-# 定义系统动力学
+# 定义系统动力学(状态转移方程)
 def dynamics(x, u):
     return ca.mtimes(A, x) + ca.mtimes(B, u)
 
-# Function for Leader Follower Game with Deceleration and Acceleration
+"""
+Function for Leader Follower Game with Deceleration and Acceleration
+输入: leader,follower的初始状态xL0,xF0;
+输出: XF_sol, UF_sol, XL_sol, UL_sol
+"""
 def gameLeaderFollower(xL0, xF0, probDecel, probAccel):
 
     # 定义优化问题
     nx = 6  # 状态维度
     nu = 2  # 输入维度
-    lenX = nx * (N+1)
-    lenU = nu * N
+    lenX = nx * (N+1) # 6*21=121
+    lenU = nu * N     # 2*20=40
 
-    XDecelF = ca.MX.sym('XDecelF', nx, N+1)
-    UDecelF = ca.MX.sym('UDecelF', nu, N)
+    # follower和leader分布在Decel,Accel时的状态和控制量:
+    XDecelF = ca.MX.sym('XDecelF', nx, N+1) # 6*21
+    UDecelF = ca.MX.sym('UDecelF', nu, N)   # 2*20(follower的2个控制量jerk_f_x, jerk_f_y)
     XDecelL = ca.MX.sym('XDecelL', nx, N+1)
     UDecelL = ca.MX.sym('UDecelL', nu, N)
     XAccelF = ca.MX.sym('XAccelF', nx, N+1)
@@ -93,37 +99,37 @@ def gameLeaderFollower(xL0, xF0, probDecel, probAccel):
     UAccelL = ca.MX.sym('UAccelL', nu, N)
 
     # Initialize costs and constraints
-    JDecelF = 0
+    JDecelF = 0 # 代价函数
     JDecelL = 0
     JAccelF = 0
     JAccelL = 0
-    consDecelF = []
+    consDecelF = [] # 等式约束:初始状态,状态转移方程
     consDecelL = []
     consAccelF = []
     consAccelL = []
-    collisionConsDecelF = []
+    collisionConsDecelF = []  # 不等式约束:碰撞约束:
     collisionConsDecelL = []
     collisionConsAccelF = []
     collisionConsAccelL = []
 
-    # Initial state constraints
+    # Initial state constraints(等式约束1:初始状态)
     consDecelF.append(XDecelF[:, 0] - xF0)
     consDecelL.append(XDecelL[:, 0] - xL0)
     consAccelF.append(XAccelF[:, 0] - xF0)
     consAccelL.append(XAccelL[:, 0] - xL0)
 
-    # Define reference trajectories
+    # Define reference trajectories(实际上定义了目标状态(不关注x的值))
     xFrefCa = ca.MX(xFref)
     xLrefCa = ca.MX(xLref)
 
     for k in range(N):
-        # Cost function for deceleration and acceleration
+        # Cost function for deceleration and acceleration(状态误差和控制量的代价)
         JDecelF += ca.mtimes([(XDecelF[:, k+1] - xFrefCa).T, Q, (XDecelF[:, k+1] - xFrefCa)]) + ca.mtimes([UDecelF[:, k].T, R, UDecelF[:, k]])
         JDecelL += ca.mtimes([(XDecelL[:, k+1] - xLrefCa).T, Q, (XDecelL[:, k+1] - xLrefCa)]) + ca.mtimes([UDecelL[:, k].T, R, UDecelL[:, k]])
         JAccelF += ca.mtimes([(XAccelF[:, k+1] - xFrefCa).T, Q, (XAccelF[:, k+1] - xFrefCa)]) + ca.mtimes([UAccelF[:, k].T, R, UAccelF[:, k]])
         JAccelL += ca.mtimes([(XAccelL[:, k+1] - xLrefCa).T, Q, (XAccelL[:, k+1] - xLrefCa)]) + ca.mtimes([UAccelL[:, k].T, R, UAccelL[:, k]])
 
-        # Dynamics constraints
+        # Dynamics constraints(等式约束2:约束follower,leader都满足状态转移方程)
         xF_next_dec = dynamics(XDecelF[:, k], UDecelF[:, k])
         xL_next_dec = dynamics(XDecelL[:, k], UDecelL[:, k])
         xF_next_acc = dynamics(XAccelF[:, k], UAccelF[:, k])
@@ -134,7 +140,7 @@ def gameLeaderFollower(xL0, xF0, probDecel, probAccel):
         consAccelF.append(XAccelF[:, k+1] - xF_next_acc)
         consAccelL.append(XAccelL[:, k+1] - xL_next_acc)
 
-        # Collision constraints
+        # Collision constraints(不等式约束:碰撞约束)
         if addCollisionCons:
             collisionConsDecelF.append(distDecelF + XDecelF[0, k+1] - XDecelL[0, k+1])
             collisionConsDecelL.append(distL + XDecelF[0, k+1] - XDecelL[0, k+1])
@@ -146,7 +152,7 @@ def gameLeaderFollower(xL0, xF0, probDecel, probAccel):
     equConDecelL = ca.vertcat(*consDecelL)
     equConAccelF = ca.vertcat(*consAccelF)
     equConAccelL = ca.vertcat(*consAccelL)
-    inequConsDecelF = ca.vertcat(*collisionConsDecelF)
+    inequConsDecelF = ca.vertcat(*collisionConsDecelF)  # 子优化的不等式约束
     inequConsDecelL = ca.vertcat(*collisionConsDecelL)
     inequConsAccelF = ca.vertcat(*collisionConsAccelF)
     inequConsAccelL = ca.vertcat(*collisionConsAccelL)
@@ -158,7 +164,7 @@ def gameLeaderFollower(xL0, xF0, probDecel, probAccel):
     mu_dec = ca.MX.sym('mu_dec', inequConsDecelF.size1())
     mu_acc = ca.MX.sym('mu_acc', inequConsAccelF.size1())
 
-    # Lagrangian for deceleration and acceleration
+    # Lagrangian for deceleration and acceleration(分布构建follower在Decel,Accel时的拉格朗日函数.即,用于构建子最优问题的kkt条件)
     LagrangianDecel = JDecelF + \
                       ca.mtimes([lambda_dec.T, equConDecelF]) + \
                       ca.mtimes([mu_dec.T, inequConsDecelF])
@@ -166,26 +172,28 @@ def gameLeaderFollower(xL0, xF0, probDecel, probAccel):
                       ca.mtimes([lambda_acc.T, equConAccelF]) + \
                       ca.mtimes([mu_acc.T, inequConsAccelF])
 
-    # KKT conditions
+    # KKT conditions(子优化问题的拉格朗日的偏导数，作为bi-optimization的等式约束)
     grad_L_x_decel = ca.gradient(LagrangianDecel, ca.vertcat(ca.reshape(XDecelF, -1, 1), ca.reshape(UDecelF, -1, 1)))
     grad_L_x_accel = ca.gradient(LagrangianAccel, ca.vertcat(ca.reshape(XAccelF, -1, 1), ca.reshape(UAccelF, -1, 1)))
+    # 由子优化的kkt条件引入的互补松弛等式约束条件
     complementary_slackness_decel = ca.diag(mu_dec) @ inequConsDecelF
     complementary_slackness_accel = ca.diag(mu_acc) @ inequConsAccelF
 
-    # Contingency MPC
+    # Contingency MPC(约束CMPC中leader的两条轨迹的初始输入相同)
     CMpcCon = UDecelL[:, 0] - UAccelL[:, 0]
 
     # equality constraints
     equCon = ca.vertcat(equConDecelF, equConAccelF, equConDecelL, equConAccelL,
                         grad_L_x_decel, grad_L_x_accel, complementary_slackness_decel, complementary_slackness_accel, CMpcCon)
 
-    # Construct the optimization problem
+    # Construct the optimization problem(构造bi-optimization问题的新状态变量x)
     x = ca.vertcat(ca.reshape(XDecelF, -1, 1), ca.reshape(UDecelF, -1, 1),
                    ca.reshape(XDecelL, -1, 1), ca.reshape(UDecelL, -1, 1),
                    ca.reshape(XAccelF, -1, 1), ca.reshape(UAccelF, -1, 1),
                    ca.reshape(XAccelL, -1, 1), ca.reshape(UAccelL, -1, 1), lambda_dec, lambda_acc, mu_dec, mu_acc)
 
     # Lower bound to x (add constraint mu >= 0)
+    # 对bi-optimization的状态变量x添加下边界约束(mu_* >= 0，其它的都是>-inf)
     lbx = ca.vertcat(
         ca.repmat(-ca.inf, 4 * (lenU + lenX) + lambda_dec.size1() + lambda_acc.size1(), 1),  # 生成全为 -ca.inf 的列向量
         ca.repmat(0, mu_dec.size1() + mu_acc.size1(), 1)                                  # 生成全为 0 的列向量(for mu)
@@ -276,7 +284,7 @@ for n in range(N):
     else:
         UF_actual.append(UAccelF_sol[:, 0])
 
-    # Update Decel and Accel probability (when neither prob achieve upper bound)
+    # Update Decel and Accel probability (when neither prob achieve upper bound)(当两个概率值都没有达到上限时，更新概率)
     # n == 0 corespond to init acceleration
     if n != 0 and probDecel_curr < probUpperBound and probAccel_curr < probUpperBound:
         if xF_curr[2] < -accThreshold:
@@ -464,10 +472,10 @@ def update(frame):
     # ax[2].grid(True)
 
     # save fig
-    plt.savefig(f'{current_file_path}/log/CMPCGame_{frame}.jpg')
+    plt.savefig(f'{current_file_path}/log_CMPCGame/CMPCGame_{frame}.jpg')
 
 ani = FuncAnimation(fig, update, frames=range(N), repeat=False)
-ani.save(f'{current_file_path}/log/CMPCGame_animation.gif', writer='pillow')
-ani.save(f'{current_file_path}/log/CMPCGame_animation.mp4', writer='ffmpeg')
+ani.save(f'{current_file_path}/log_CMPCGame/CMPCGame_animation.gif', writer='pillow')
+ani.save(f'{current_file_path}/log_CMPCGame/CMPCGame_animation.mp4', writer='ffmpeg')
 
 # plt.show()

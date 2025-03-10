@@ -287,10 +287,10 @@ def update(frame):
     # ax[1].grid(True)
 
     # save fig
-    plt.savefig(f'{current_file_path}/log/Game_{frame}.jpg')
+    plt.savefig(f'{current_file_path}/log_Game/Game_{frame}.jpg')
 
 ani = FuncAnimation(fig, update, frames=range(N+1), repeat=False)
-ani.save(f'{current_file_path}/log/Game_animation.gif', writer='pillow')
-ani.save(f'{current_file_path}/log/Game_animation.mp4', writer='ffmpeg')
+ani.save(f'{current_file_path}/log_Game/Game_animation.gif', writer='pillow')
+ani.save(f'{current_file_path}/log_Game/Game_animation.mp4', writer='ffmpeg')
 
 # plt.show()
