@@ -6,6 +6,7 @@ from matplotlib.animation import FuncAnimation
 
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 
+# x,y方向都使用jerk的3阶模型；状态定义(sx,vx,ax,sy,vy,ay); xFref与xLref不同，区别在速度上；
 # 参数设置
 T = 10          # 总时间10s
 tau = 0.5       # 时间步长0.5s 
@@ -14,21 +15,21 @@ N = int(T/tau)  # 总步数N=20
 # N = 5
 Q = np.diag([0.0, 1.0, 2.0, 1.0, 2.0, 4.0])         # 状态误差权重(分别对一个x,y方向上的6个状态。Q[0][0]为0,说明cost中不关注x的位置)
 R = np.diag([4.0, 4.0])                             # 控制输入权重(分别对应x,y方向上的输入jx,jy)
-xF0 = np.array([2.0, 15.0, 0.0, 5.0, 0.0, 0.0])     # follower初始状态定义(x,vx,ax,y,vy,ay)
-xFref = np.array([0.0, 15.0, 0.0, 5.0, 0.0, 0.0])   # follower目标状态(由Q[0][0]为0可知,不关注x状态,只关注另外5个状态)
+xF0 = np.array([2.0, 15.0, 0.0, 5.0, 0.0, 0.0])     # follower初始状态定义：从(2.0, 5.0)的位置，沿x正方向以15m/s速度运动。
+xFref = np.array([0.0, 15.0, 0.0, 5.0, 0.0, 0.0])   # follower目标状态：在y=5.0m处，沿x方向以15m/s速度运动。(由Q[0][0]为0可知,不关注x状态,只关注另外5个状态)
 # xL0 = np.array([12.0, 10.0, 0.0, 3.0, 0.0, 0.0])
-xL0 = np.array([32.0, 10.0, 0.0, 3.0, 0.0, 0.0])    # leader初始状态定义
-xLref = np.array([0.0, 10.0, 0.0, 5.0, 0.0, 0.0])   # leader目标状态(由Q[0][0]为0可知,不关注x状态,只关注另外5个状态)
+xL0 = np.array([32.0, 10.0, 0.0, 3.0, 0.0, 0.0])    # leader初始状态定义：从(32.0, 3.0)的位置，沿x正方向以10m/s速度运动.
+xLref = np.array([0.0, 10.0, 0.0, 5.0, 0.0, 0.0])   # leader目标状态：在y=5.0m处，沿x方向以10m/s速度运动。(由Q[0][0]为0可知,不关注x状态,只关注另外5个状态)
 addCollisionCons = True
 vxRef = 15
 # vxRef = 10
 
-KF = 0.01       # folloer的cost系数(KF与KL和为1)
+KF = 0.01       # folloer的cost系数(KF与KL和为1），用于Jcooperative
 KL = 1 - KF     # leader的cost系数
 # distF = 20    # collision ditance (conservative)
 distF = 10      # collision ditance (agressive)(follower避障约束中要与leader的安全距离)
 distL = 15      # leader避障约束中要与follower的安全距离
-Kinfluence = 0  # leader对周围folloer影响cost的系数
+Kinfluence = 0  # leader对周围folloer影响cost的系数(Jinfluence的权重系数)
 
 # KF = 0.5
 # KL = 1 - KF
