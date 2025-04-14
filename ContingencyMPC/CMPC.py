@@ -7,7 +7,7 @@ from matplotlib.patches import Rectangle
 
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 
-# Parameters:可以测试如下4组参数，分别对应CMPC的2种工况，RMPC的2中工况。
+# Parameters:可以测试如下4组参数，分别对应CMPC的2种工况，RMPC的2种工况。
 
 # # 1. CMPC - obstacle pops out
 cmpc = True     # True 使用CMPC; False 使用RMPC.
@@ -32,9 +32,9 @@ Pc = 0.7
 # Pc = 1.0 - 1e-2      
 
 # Define the horizon(这里的N可以理解为t)
-N = 12      # 总共仿真12步
-N_obs = 10  # N for obstacle 
-N_c = 4     # N for contingency (pops out) obs在N=4时开始跳出
+N = 12      # 总仿真12步(生成12帧动画)
+N_obs = 10  # N for obstacle (obs所处的x向位置.即当时间单位为1时，该位置就等于步数值)
+N_c = 4     # N for contingency (pops out) obs在第4个时间步时开始跳出
 # N_o = N_obs - N_c   # N for observe (pops out)
 
 Pn = 1 - Pc     # Cost weight for normal control(nominal planning的概率)
@@ -42,7 +42,7 @@ Pn = 1 - Pc     # Cost weight for normal control(nominal planning的概率)
 y_obs_max = 0.5     # Obstacle position maximum (for N_obs = 10) obs的y向最大位置到0.5处
 y_obs_0 = -1.0      # obs的y向初始位置是-1.0处
 # obs_speed = 0.25  # Obstacle speed
-obs_speed = 0.2  # Obstacle speed   obs的y向速度为0.2m/s(0.2个单位每个仿真步长)
+obs_speed = 0.2  # Obstacle speed   obs的y向速度为0.2(0.2个单位/仿真步长)
 obs_width = 0.4 # Obstacle width
 collision_width = 0.1 # Collision width
 
@@ -186,6 +186,9 @@ for t in range(N):
 # Create the animation
 fig, ax = plt.subplots(2, 1, figsize=(10, 8))
 
+"""
+动画的核心，它负责绘制每一帧的内容。(参数 frame, 表示当前帧的索引。)
+"""
 def update(frame):
 
     # clear plotting of last timestep
@@ -250,6 +253,7 @@ def update(frame):
     # save fig
     plt.savefig(f'{current_file_path}/log/frame_{frame}.jpg')
 
+# matplotlib.animation 模块中的一个类，用于创建基于函数的动画。它通过重复调用用户定义的函数来生成动画的每一帧
 ani = FuncAnimation(fig, update, frames=range(N), repeat=False)
 ani.save(f'{current_file_path}/log/mpc_animation.gif', writer='pillow')
 ani.save(f'{current_file_path}/log/mpc_animation.mp4', writer='ffmpeg')
