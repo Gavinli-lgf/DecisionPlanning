@@ -78,8 +78,8 @@ def solve_Cmpc(x0, y0n, y0c, t):
         J += Pn * un[k]**2 + Pc * uc[k]**2
 
     # Define the constraints (定义约束条件:控制输入约束)
-    g = []
-    lbg = []
+    g = []      # 状态约束g：y位置的约束
+    lbg = []    # 输入约束lbg,ubg(lbg 都取 0; ubg 初始取0，其他都取 ca.inf)
     ubg = []
 
     # Control constraint

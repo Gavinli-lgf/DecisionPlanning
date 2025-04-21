@@ -29,7 +29,7 @@ KL = 1 - KF     # leader的cost系数
 # distF = 20    # collision ditance (conservative)
 distF = 10      # collision ditance (agressive)(follower避障约束中要与leader的安全距离)
 distL = 15      # leader避障约束中要与follower的安全距离
-Kinfluence = 0  # leader对周围folloer影响cost的系数(Jinfluence的权重系数)
+Kinfluence = 0  # leader对周围follower影响cost的系数(Jinfluence的权重系数)
 
 # KF = 0.5
 # KL = 1 - KF
@@ -83,9 +83,9 @@ def gameLeaderFollower(xL0, xF0):
     lenX = nx * (N+1)   # 6*21=121
     lenU = nu * N       # 2*20=40
 
-    JF = 0          # cost:follower的代价函数
-    JL = 0          # cost:leader的代价函数
-    Jinfluence = 0  # cost:leader对周围follower的影响代价
+    JF = 0          # cost:follower的Jbase
+    JL = 0          # cost:leader的Jbase
+    Jinfluence = 0  # cost:leader对周围follower的影响代价(论文式(15),式(16),代码中实际只用了式(15))
     consF = []          # constrain: follower的等式约束
     consL = []          # constrain: leader的等式约束
     collisionConsF = [] # constrain: follower的不等式约束
@@ -100,19 +100,19 @@ def gameLeaderFollower(xL0, xF0):
         # cost
         xFrefCa = ca.MX(xFref)
         xLrefCa = ca.MX(xLref)
-        JF += ca.mtimes([(XF[:, k+1] - xFrefCa).T, Q, (XF[:, k+1] - xFrefCa)]) + ca.mtimes([UF[:, k].T, R, UF[:, k]])
-        JL += ca.mtimes([(XL[:, k+1] - xLrefCa).T, Q, (XL[:, k+1] - xLrefCa)]) + ca.mtimes([UL[:, k].T, R, UL[:, k]])
-        Jinfluence += (XF[1, k+1] - vxRef) ** 2
+        JF += ca.mtimes([(XF[:, k+1] - xFrefCa).T, Q, (XF[:, k+1] - xFrefCa)]) + ca.mtimes([UF[:, k].T, R, UF[:, k]])   # F的Jbase
+        JL += ca.mtimes([(XL[:, k+1] - xLrefCa).T, Q, (XL[:, k+1] - xLrefCa)]) + ca.mtimes([UL[:, k].T, R, UL[:, k]])   # L的Jbase
+        Jinfluence += (XF[1, k+1] - vxRef) ** 2     # leader对follower的Jinfluence,式(15)
         # constrain(等式约束2:约束leader,follower满足动力学方程)
         xF_next = dynamics(XF[:, k], UF[:, k])
         xL_next = dynamics(XL[:, k], UL[:, k])
         consF.append(XF[:, k+1] - xF_next)
         consL.append(XL[:, k+1] - xL_next)
-        # collision(不等式约束: follower与leader分别的避障约束)
+        # collision 不等式约束: F与L分别的避障约束。(注:这里作者为了简化编码，强制约束leader必须在Follower前面。但论文中不是如此，还要考虑leader让行的情况。)
         if addCollisionCons:
             # px_L - px_F > dist  => dist + px_F - px_L < 0
-            collisionConsF.append(distF + XF[0, k+1] - XL[0, k+1])
-            collisionConsL.append(distL + XF[0, k+1] - XL[0, k+1])
+            collisionConsF.append(distF + XF[0, k+1] - XL[0, k+1])  # 约束Leader的x位置在Follower的x前distF距离外(与仿真结果对应)
+            collisionConsL.append(distL + XF[0, k+1] - XL[0, k+1])  # 约束Leader的x位置在Follower的x前distL距离外(与仿真结果对应)
 
     equConF = ca.vertcat(*consF)
     equConL = ca.vertcat(*consL)
@@ -124,18 +124,18 @@ def gameLeaderFollower(xL0, xF0):
     lambda_ = ca.MX.sym('lambda', equConF.size1())
     mu = ca.MX.sym('nu', inequConsF.size1())
 
-    # Lagrangian(构建follower的cost的拉格朗日函数)
+    # Lagrangian(构建follower子OCP问题的拉格朗日函数)
     Lagrangian = JF + ca.mtimes([lambda_.T, equConF]) + ca.mtimes([mu.T, inequConsF])
 
-    # KKT condition (equality)(构建follower的优化的kkt条件)
-    grad_L_x = ca.gradient(Lagrangian, ca.vertcat(ca.reshape(XF, -1, 1), ca.reshape(UF, -1, 1)))
-    complementary_slackness = ca.diag(mu) @ inequConsF
-    equCon = ca.vertcat(equConF, equConL, grad_L_x, complementary_slackness)
+    # KKT condition (equality)(构建follower子OCP问题的kkt条件)
+    grad_L_x = ca.gradient(Lagrangian, ca.vertcat(ca.reshape(XF, -1, 1), ca.reshape(UF, -1, 1)))    # 式(6d)
+    complementary_slackness = ca.diag(mu) @ inequConsF                          # 式(6h)
+    equCon = ca.vertcat(equConF, equConL, grad_L_x, complementary_slackness)    # 将式(6a)~(6h)中的等式约束组合在一起
 
     # construct the optimization problem
-    # bi-level的状态变量包含6部分:XF,UF,XL,UL,lambda,mu
+    # bi-level的决策变量包含6部分:XF,UF,XL,UL,lambda,mu
     x = ca.vertcat(ca.reshape(XF, -1, 1), ca.reshape(UF, -1, 1), ca.reshape(XL, -1, 1), ca.reshape(UL, -1, 1), lambda_, mu)
-    # 对"bi-level"的状态变量的约束: 对"XF,UF,XL,UL,lambda"的下边界约束为"-ca.inf"; 对"mu"约束为"0"。
+    # 对上述6部分的决策变量的lower bound约束: (1)对"XF,UF,XL,UL,lambda"的下边界约束为"-ca.inf"; (2)对"mu"约束为"0"。
     lbx = ca.vertcat((2 * (lenU + lenX) + lambda_.size1()) * [-ca.inf] + mu.size1() * [0])
     nlp = {'x': x, 'f': KF * JF + KL * JL + Kinfluence * Jinfluence, 'g': ca.vertcat(equCon, inequCon)}
 
